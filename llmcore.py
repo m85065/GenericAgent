@@ -763,7 +763,7 @@ class CopilotSDKSession(BaseSession):
             try: reply = await session.send_and_wait(prompt)
             finally:
                 try: await session.disconnect()
-                except Exception: pass
+                except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
             data = getattr(reply, "data", reply)
             if isinstance(data, dict): return str(data.get("content", ""))
             return str(getattr(data, "content", data) or "")

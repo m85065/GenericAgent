@@ -62,7 +62,7 @@ native_oai_config = {
 # copilot_sdk_config = {
 #     'name': 'copilot-sdk',
 #     'model': 'gpt-5',                         # any model available in Copilot
-#     'github_token': 'ghp_<your_github_token>',  # optional if already logged in
+#     'github_token': 'ghp_<your_github_token>',  # optional if CLI login / GH_TOKEN / GITHUB_TOKEN is already available
 #     # 'copilot_home': './temp/copilot_home',  # optional writable home dir
 #     # 'cli_path': '/path/to/copilot',         # optional custom copilot CLI
 # }
