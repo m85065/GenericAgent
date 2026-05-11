@@ -714,7 +714,7 @@ class NativeOAISession(NativeClaudeSession):
 
 class CopilotSDKSession(BaseSession):
     def __init__(self, cfg):
-        github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN')
+        github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
         ccfg = dict(cfg)
         ccfg.setdefault('apikey', github_token or '')
         ccfg.setdefault('apibase', cfg.get('apibase', 'https://api.githubcopilot.com'))
@@ -743,7 +743,7 @@ class CopilotSDKSession(BaseSession):
                 content = "\n".join(parts)
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
         return "\n\n".join(lines).strip()
-    async def _send_once(self, prompt):
+    async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
         subprocess_kwargs = {}
@@ -769,7 +769,7 @@ class CopilotSDKSession(BaseSession):
             if isinstance(data, dict): return str(data.get("content", ""))
             return str(getattr(data, "content", data) or "")
     def raw_ask(self, messages):
-        try: text = _run_async_sync(self._send_once(self._messages_to_prompt(messages)))
+        try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
         except Exception as e:
             err = f"!!!Error: {type(e).__name__}: {e}"
             yield err; return [{"type": "text", "text": err}]
