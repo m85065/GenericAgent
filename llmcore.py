@@ -714,12 +714,13 @@ class NativeOAISession(NativeClaudeSession):
 
 class CopilotSDKSession(BaseSession):
     def __init__(self, cfg):
+        github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN')
         ccfg = dict(cfg)
-        ccfg.setdefault('apikey', cfg.get('github_token', os.environ.get('COPILOT_GITHUB_TOKEN', '')))
+        ccfg.setdefault('apikey', github_token or '')
         ccfg.setdefault('apibase', cfg.get('apibase', 'https://api.githubcopilot.com'))
         ccfg.setdefault('model', cfg.get('model', 'gpt-5'))
         super().__init__(ccfg)
-        self.github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN')
+        self.github_token = github_token
         self.copilot_home = cfg.get('copilot_home')
         self.cli_path = cfg.get('cli_path')
         self.cli_args = cfg.get('cli_args')
@@ -745,15 +746,15 @@ class CopilotSDKSession(BaseSession):
     async def _send_once(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
-        skw = {}
-        if self.github_token: skw["github_token"] = self.github_token
-        if self.copilot_home: skw["copilot_home"] = self.copilot_home
-        if self.cli_path: skw["cli_path"] = self.cli_path
-        if self.cli_args is not None: skw["cli_args"] = self.cli_args
-        if self.cli_cwd: skw["cwd"] = self.cli_cwd
-        if self.cli_env is not None: skw["env"] = self.cli_env
-        if self.cli_log_level: skw["log_level"] = self.cli_log_level
-        cfg = SubprocessConfig(**skw) if skw else None
+        subprocess_kwargs = {}
+        if self.github_token: subprocess_kwargs["github_token"] = self.github_token
+        if self.copilot_home: subprocess_kwargs["copilot_home"] = self.copilot_home
+        if self.cli_path: subprocess_kwargs["cli_path"] = self.cli_path
+        if self.cli_args is not None: subprocess_kwargs["cli_args"] = self.cli_args
+        if self.cli_cwd: subprocess_kwargs["cwd"] = self.cli_cwd
+        if self.cli_env is not None: subprocess_kwargs["env"] = self.cli_env
+        if self.cli_log_level: subprocess_kwargs["log_level"] = self.cli_log_level
+        cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
             if self.model: kwargs["model"] = self.model
