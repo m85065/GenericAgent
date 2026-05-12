@@ -875,7 +875,7 @@ class CopilotSDKSession(BaseSession):
                 if streamed:
                     self._warn_cli_log("[WARN] Copilot session idle timeout; using streamed partial output.")
                     return [{"type": "text", "text": ""}]
-                warn = "[WARN] Copilot session idle timeout after 60s; please retry."
+                warn = "[WARN] Copilot session idle timeout; please retry."
                 yield warn
                 return [{"type": "text", "text": warn}]
             err = f"!!!Error: {type(thread_result['err']).__name__}: {thread_result['err']}"
