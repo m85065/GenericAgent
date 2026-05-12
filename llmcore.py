@@ -904,8 +904,7 @@ class CopilotSDKSession(BaseSession):
             if self._is_session_idle_timeout(thread_result["err"]):
                 warn = "[WARN] Copilot session idle timeout; please retry."
                 self._warn_cli_log(warn)
-                yield warn
-                return [{"type": "text", "text": warn}]
+                return []
             err = f"!!!Error: {type(thread_result['err']).__name__}: {thread_result['err']}"
             yield err
             return [{"type": "text", "text": err}]
