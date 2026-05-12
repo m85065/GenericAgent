@@ -19,10 +19,7 @@ def _console_safe_text(text):
     if not isinstance(text, str):
         text = str(text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    try:
-        return text.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
-    except UnicodeError:
-        return text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+    return text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
 
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
@@ -159,17 +156,18 @@ class GenericAgent:
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, 
                                 handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
             try:
-                full_resp = ""; last_pos = 0
+                full_resp = ""; safe_resp = ""; last_pos = 0; last_safe_pos = 0
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
                     full_resp += chunk
+                    safe_resp += _console_safe_text(chunk)
                     if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
-                        out_text = _console_safe_text(full_resp[last_pos:] if self.inc_out else full_resp)
+                        out_text = safe_resp[last_safe_pos:] if self.inc_out else safe_resp
                         display_queue.put({'next': out_text, 'source': source})
-                        last_pos = len(full_resp)
+                        last_pos, last_safe_pos = len(full_resp), len(safe_resp)
                 if self.inc_out and last_pos < len(full_resp):
-                    out_text = _console_safe_text(full_resp[last_pos:])
+                    out_text = safe_resp[last_safe_pos:]
                     display_queue.put({'next': out_text, 'source': source})
                 if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
                 if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
