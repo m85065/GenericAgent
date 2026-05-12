@@ -34,25 +34,24 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 self.kwargs = kwargs
 
         class FakeSession:
-            def __init__(self):
-                self._event_handlers = []
-            def on(self, handler):
-                self._event_handlers.append(handler)
-                def _unsubscribe():
-                    if handler in self._event_handlers:
-                        self._event_handlers.remove(handler)
-                return _unsubscribe
             async def send_and_wait(self, prompt):
                 record["prompt"] = prompt
-                event_progress = record.get("event_progress_output")
-                if event_progress:
-                    event = types.SimpleNamespace(
-                        type=types.SimpleNamespace(value="tool.execution_progress"),
-                        data=types.SimpleNamespace(progress_message=event_progress),
-                    )
-                    for handler in list(self._event_handlers):
-                        handler(event)
-                return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
+                on_event = record.get("_on_event")
+                message = record.get("message_content", "stubbed copilot reply")
+                if on_event:
+                    # Fire assistant.message_delta (streaming content)
+                    on_event(types.SimpleNamespace(
+                        type=types.SimpleNamespace(value="assistant.message_delta"),
+                        data=types.SimpleNamespace(delta_content=message),
+                    ))
+                    # Fire optional tool execution progress event
+                    event_progress = record.get("event_progress_output")
+                    if event_progress:
+                        on_event(types.SimpleNamespace(
+                            type=types.SimpleNamespace(value="tool.execution_progress"),
+                            data=types.SimpleNamespace(progress_message=event_progress),
+                        ))
+                return types.SimpleNamespace(data=types.SimpleNamespace(content=message))
 
             async def disconnect(self):
                 record["disconnected"] = True
@@ -78,6 +77,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
 
             async def create_session(self, **kwargs):
                 record["create_session_kwargs"] = kwargs
+                record["_on_event"] = kwargs.get("on_event")
                 return FakeSession()
 
         copilot_mod = types.ModuleType("copilot")
@@ -105,11 +105,14 @@ class CopilotSDKSessionTests(unittest.TestCase):
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
             self.assertIsInstance(session, llmcore.CopilotSDKSession)
-            output = "".join(session.ask("hello copilot sdk"))
+            with patch("sys.stderr", new_callable=io.StringIO):
+                output = "".join(session.ask("hello copilot sdk"))
 
         self.assertIn("stubbed copilot reply", output)
         self.assertEqual(self.record["create_session_kwargs"]["model"], "gpt-5")
         self.assertIn("on_permission_request", self.record["create_session_kwargs"])
+        self.assertTrue(self.record["create_session_kwargs"].get("streaming"))
+        self.assertIsNotNone(self.record["create_session_kwargs"].get("on_event"))
         self.assertEqual(self.record["subprocess_kwargs"]["github_token"], "ghp_test")
         self.assertTrue(self.record.get("disconnected"))
 
@@ -159,7 +162,17 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot outer progress log", stderr.getvalue())
 
-    def test_copilot_sdk_logs_progress_from_session_events(self):
+    def test_copilot_sdk_streaming_delta_forwarded_to_stderr(self):
+        cfg = {"model": "gpt-5"}
+        self.record["message_content"] = "Hello from Copilot!"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("Hello from Copilot!", output)
+        self.assertIn("Hello from Copilot!", stderr.getvalue())
+
+    def test_copilot_sdk_logs_progress_from_tool_execution_events(self):
         cfg = {"model": "gpt-5"}
         self.record["event_progress_output"] = "copilot sdk progress event\n"
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):

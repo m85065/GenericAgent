@@ -744,27 +744,27 @@ class CopilotSDKSession(BaseSession):
             sys.stderr.flush()
         except OSError:
             pass
-    def _emit_session_progress_event(self, event):
-        if not self.cli_log_to_console: return
-        event_type = getattr(event, "type", "")
-        event_type = str(getattr(event_type, "value", event_type) or "")
-        if event_type != "tool.execution_progress": return
-        data = getattr(event, "data", None)
-        message = self._session_event_field(data, "progress_message", "progressMessage")
-        if not message: return
-        try:
-            text = str(message)
-            sys.stderr.write(text if text.endswith('\n') else text + '\n')
-            sys.stderr.flush()
-        except OSError:
-            pass
-    def _bind_session_progress_logs(self, session):
-        on = getattr(session, "on", None)
-        if not callable(on): return None
-        try: return on(self._emit_session_progress_event)
-        except Exception as e:
-            self._warn_cli_log(f"[WARN] CopilotSDKSession session.on() bind failed: {type(e).__name__}: {e}")
-            return None
+    def _make_on_event(self, delta_chunks, final_content):
+        """Return an on_event handler that collects streaming content and forwards progress to stderr."""
+        log_to_console = self.cli_log_to_console
+        get_field = self._session_event_field
+        def on_event(event):
+            event_type = str(getattr(getattr(event, "type", ""), "value", "") or "")
+            data = getattr(event, "data", None)
+            if event_type == "assistant.message_delta":
+                delta = get_field(data, "delta_content", "deltaContent")
+                if delta:
+                    delta_chunks.append(delta)
+                    if log_to_console:
+                        try: sys.stderr.write(delta); sys.stderr.flush()
+                        except OSError: pass
+            elif event_type == "assistant.message":
+                content = get_field(data, "content")
+                if content: final_content.append(content)
+            elif event_type == "tool.execution_progress" and log_to_console:
+                msg = get_field(data, "progress_message", "progressMessage")
+                if msg: self._warn_cli_log(msg)
+        return on_event
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
@@ -816,28 +816,31 @@ class CopilotSDKSession(BaseSession):
         if self.cli_env is not None: subprocess_kwargs["env"] = self.cli_env
         if self.cli_log_level: subprocess_kwargs["log_level"] = self.cli_log_level
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
+        delta_chunks = []
+        final_content = []
+        on_event = self._make_on_event(delta_chunks, final_content)
         async with CopilotClient(config=cfg) as client:
             session = None
-            unsubscribe = None
-            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": True, "on_event": on_event}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
             try:
                 session = await client.create_session(**kwargs)
-                unsubscribe = self._bind_session_progress_logs(session)
-                reply = await session.send_and_wait(prompt)
+                await session.send_and_wait(prompt)
             finally:
-                if callable(unsubscribe):
-                    try: unsubscribe()
-                    except Exception as e: self._warn_cli_log(f"[WARN] CopilotSDKSession unsubscribe failed: {type(e).__name__}: {e}")
                 if session is not None:
                     try: await session.disconnect()
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
                 self._emit_cli_logs(client)
-            data = getattr(reply, "data", reply)
-            if isinstance(data, dict): return str(data.get("content", ""))
-            return str(getattr(data, "content", data) or "")
+        if self.cli_log_to_console and delta_chunks:
+            try:
+                if not delta_chunks[-1].endswith('\n'):
+                    sys.stderr.write('\n'); sys.stderr.flush()
+            except OSError: pass
+        if delta_chunks: return ''.join(delta_chunks)
+        if final_content: return final_content[-1]
+        return ""
     def raw_ask(self, messages):
         try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
         except Exception as e:
