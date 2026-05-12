@@ -241,9 +241,11 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.record["raise_timeout"] = True
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
-            output = "".join(session.ask("hello copilot sdk"))
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("partial before timeout", output)
         self.assertNotIn("!!!Error:", output)
+        self.assertNotIn("[WARN] Copilot session idle timeout", stderr.getvalue())
 
     def test_copilot_sdk_session_idle_timeout_without_stream_shows_warning(self):
         cfg = {"model": "gpt-5"}
