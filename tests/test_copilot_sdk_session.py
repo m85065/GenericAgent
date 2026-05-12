@@ -116,8 +116,18 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("on_permission_request", self.record["create_session_kwargs"])
         self.assertTrue(self.record["create_session_kwargs"].get("streaming"))
         self.assertIsNotNone(self.record["create_session_kwargs"].get("on_event"))
+        self.assertEqual(self.record["create_session_kwargs"].get("idleTimeoutSeconds"), 180)
         self.assertEqual(self.record["subprocess_kwargs"]["github_token"], "ghp_test")
         self.assertTrue(self.record.get("disconnected"))
+
+    def test_copilot_sdk_session_idle_timeout_configurable(self):
+        cfg = {"model": "gpt-5", "session_idle_timeout_seconds": 240}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO):
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertEqual(self.record["create_session_kwargs"].get("idleTimeoutSeconds"), 240)
 
     def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):
         cfg = {"model": "gpt-5"}

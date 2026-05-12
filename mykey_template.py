@@ -334,6 +334,7 @@ native_oai_config = {
 #     # 'cli_path': '/path/to/copilot',          # 可选；自定义 copilot CLI 路径
 #     # 'cli_log_level': 'debug',                 # 可选；让 Copilot CLI 产生日志
 #     # 'cli_log_to_console': True,               # 可选；把 CLI stderr 日志转发到当前控制台
+#     # 'session_idle_timeout_seconds': 180,      # 可选；Copilot session.idle 超时秒数（默认 180）
 # }
 #
 #

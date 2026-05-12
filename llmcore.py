@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio, queue
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio, queue, inspect
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
@@ -729,6 +729,7 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_level = cfg.get('cli_log_level')
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.provider = cfg.get('provider')
+        self.session_idle_timeout_seconds = int(cfg.get('session_idle_timeout_seconds', cfg.get('idle_timeout_seconds', 180)))
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _session_event_field(self, data, *names):
         for name in names:
@@ -833,6 +834,21 @@ class CopilotSDKSession(BaseSession):
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
+            timeout_arg_names = ("idleTimeoutSeconds", "idle_timeout_seconds", "session_idle_timeout_seconds")
+            try:
+                params = inspect.signature(client.create_session).parameters
+                supports_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            except (TypeError, ValueError):
+                params = {}
+                supports_var_kwargs = True
+            if self.session_idle_timeout_seconds > 0:
+                if "idleTimeoutSeconds" in params or supports_var_kwargs:
+                    kwargs["idleTimeoutSeconds"] = self.session_idle_timeout_seconds
+                else:
+                    for name in timeout_arg_names[1:]:
+                        if name in params:
+                            kwargs[name] = self.session_idle_timeout_seconds
+                            break
             try:
                 session = await client.create_session(**kwargs)
                 response = await session.send_and_wait(prompt)
