@@ -872,16 +872,15 @@ class CopilotSDKSession(BaseSession):
         background_thread = threading.Thread(target=_runner)
         background_thread.start()
         streamed = False
+        buffered_deltas = []
         while True:
             item = q.get()
             if item is done_sentinel: break
             streamed = True
-            yield item
+            buffered_deltas.append(item)
         background_thread.join()
         if thread_result["err"] is not None:
             if self._is_session_idle_timeout(thread_result["err"]):
-                if streamed:
-                    return [{"type": "text", "text": ""}]
                 warn = "[WARN] Copilot session idle timeout; please retry."
                 self._warn_cli_log(warn)
                 yield warn
@@ -890,8 +889,10 @@ class CopilotSDKSession(BaseSession):
             yield err
             return [{"type": "text", "text": err}]
         text = thread_result["text"] or ""
-        if text and not streamed: yield text
-        return [{"type": "text", "text": text}]
+        final_text = text if text else (''.join(buffered_deltas) if streamed else "")
+        if final_text:
+            yield final_text
+        return [{"type": "text", "text": final_text}]
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
