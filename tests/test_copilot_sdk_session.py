@@ -53,7 +53,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
                             data=types.SimpleNamespace(progress_message=event_progress),
                         ))
                 if record.get("raise_timeout"):
-                    raise TimeoutError("Timeout after 60.0s waiting for session.idle")
+                    raise TimeoutError("Timeout after 180.0s waiting for session.idle")
                 return types.SimpleNamespace(data=types.SimpleNamespace(content=final_message))
 
             async def disconnect(self):
