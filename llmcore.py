@@ -851,20 +851,20 @@ class CopilotSDKSession(BaseSession):
     def raw_ask(self, messages):
         prompt = self._messages_to_prompt(messages)
         q = queue.Queue()
-        done = object()
+        done_sentinel = object()
         thread_result = {"text": "", "err": None}
         def _emit_delta(delta):
             if delta: q.put(delta)
         def _runner():
             try: thread_result["text"] = _run_async_sync(self._send_with_session(prompt, on_delta=_emit_delta))
             except Exception as e: thread_result["err"] = e
-            finally: q.put(done)
-        background_thread = threading.Thread(target=_runner, daemon=True)
+            finally: q.put(done_sentinel)
+        background_thread = threading.Thread(target=_runner)
         background_thread.start()
         streamed = False
         while True:
             item = q.get()
-            if item is done: break
+            if item is done_sentinel: break
             streamed = True
             yield item
         background_thread.join()

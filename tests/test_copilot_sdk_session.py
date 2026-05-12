@@ -38,6 +38,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 record["prompt"] = prompt
                 on_event = record.get("_on_event")
                 message = record.get("message_content", "stubbed copilot reply")
+                final_message = record.get("final_message_content", message)
                 if on_event:
                     # Fire assistant.message_delta (streaming content)
                     on_event(types.SimpleNamespace(
@@ -51,7 +52,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
                             type=types.SimpleNamespace(value="tool.execution_progress"),
                             data=types.SimpleNamespace(progress_message=event_progress),
                         ))
-                return types.SimpleNamespace(data=types.SimpleNamespace(content=message))
+                return types.SimpleNamespace(data=types.SimpleNamespace(content=final_message))
 
             async def disconnect(self):
                 record["disconnected"] = True
@@ -211,6 +212,16 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("Hello", stderr.getvalue())
         self.assertIn(" from", stderr.getvalue())
         self.assertIn(" Copilot!", stderr.getvalue())
+
+    def test_copilot_sdk_prefers_stream_deltas_over_final_message_fallback(self):
+        cfg = {"model": "gpt-5"}
+        self.record["message_content"] = "delta-only"
+        self.record["final_message_content"] = "final-message"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("delta-only", output)
+        self.assertNotIn("final-message", output)
 
     def test_copilot_sdk_logs_progress_from_tool_execution_events(self):
         cfg = {"model": "gpt-5"}
