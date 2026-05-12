@@ -729,7 +729,12 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_level = cfg.get('cli_log_level')
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.provider = cfg.get('provider')
-        self.session_idle_timeout_seconds = int(cfg.get('session_idle_timeout_seconds', cfg.get('idle_timeout_seconds', 180)))
+        raw_idle_timeout = cfg.get('session_idle_timeout_seconds', cfg.get('idle_timeout_seconds', 180))
+        try:
+            parsed_idle_timeout = int(raw_idle_timeout)
+        except (TypeError, ValueError):
+            parsed_idle_timeout = 180
+        self.session_idle_timeout_seconds = parsed_idle_timeout if parsed_idle_timeout > 0 else 180
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _session_event_field(self, data, *names):
         for name in names:
