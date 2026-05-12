@@ -245,6 +245,16 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot sdk progress event", stderr.getvalue())
 
+    def test_copilot_sdk_ignores_idle_progress_event(self):
+        cfg = {"model": "gpt-5"}
+        self.record["event_progress_output"] = "session.idle"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertNotIn("session.idle", stderr.getvalue().lower())
+
     def test_copilot_sdk_session_idle_timeout_returns_partial_subagent_response(self):
         cfg = {"model": "gpt-5"}
         self.record["message_content"] = "partial before timeout"

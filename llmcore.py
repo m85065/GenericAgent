@@ -752,12 +752,20 @@ class CopilotSDKSession(BaseSession):
             pass
     def _is_session_idle_timeout(self, err):
         return isinstance(err, TimeoutError) and "session.idle" in str(err).lower()
+    def _is_idle_event(self, event_type="", progress_msg=None):
+        event_name = (event_type or "").strip().lower()
+        if event_name in {"idle", "session.idle"} or event_name.endswith(".idle"):
+            return True
+        message = str(progress_msg or "").strip().lower()
+        return message in {"idle", "session.idle"} or "session.idle" in message
     def _make_on_event(self, delta_chunks, final_content, on_delta=None):
         """Return an on_event handler that collects streaming content and forwards progress to stderr."""
         log_to_console = self.cli_log_to_console
         get_field = self._session_event_field
         def on_event(event):
             event_type = str(getattr(getattr(event, "type", ""), "value", "") or "")
+            if self._is_idle_event(event_type):
+                return
             data = getattr(event, "data", None)
             if event_type == "assistant.message_delta":
                 delta = get_field(data, "delta_content", "deltaContent")
@@ -777,7 +785,7 @@ class CopilotSDKSession(BaseSession):
                 if content: final_content.append(content)
             elif event_type == "tool.execution_progress" and log_to_console:
                 msg = get_field(data, "progress_message", "progressMessage")
-                if msg: self._warn_cli_log(msg)
+                if msg and not self._is_idle_event(progress_msg=msg): self._warn_cli_log(msg)
         return on_event
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
