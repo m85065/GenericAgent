@@ -11,6 +11,53 @@ from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+_THINK_OPEN = "<thinking>"
+_THINK_CLOSE = "</thinking>"
+_THINK_TAG_MAX = max(len(_THINK_OPEN), len(_THINK_CLOSE))
+
+
+def split_thinking_stream(chunk, state, end=False):
+    """Split streamed text into thinking-only and non-thinking text, with tag carry-over support."""
+    data = (state.get('tail', '') or '') + (chunk or '')
+    if end:
+        body, state['tail'] = data, ''
+    else:
+        if len(data) <= _THINK_TAG_MAX:
+            state['tail'] = data
+            return '', ''
+        body, state['tail'] = data[:-_THINK_TAG_MAX], data[-_THINK_TAG_MAX:]
+    think_out, gui_out, pos = [], [], 0
+    in_thinking = bool(state.get('in_thinking', False))
+    while pos < len(body):
+        if in_thinking:
+            end_idx = body.find(_THINK_CLOSE, pos)
+            if end_idx < 0:
+                think_out.append(body[pos:])
+                pos = len(body)
+            else:
+                think_out.append(body[pos:end_idx]); think_out.append(_THINK_CLOSE)
+                pos = end_idx + len(_THINK_CLOSE); in_thinking = False
+        else:
+            start_idx = body.find(_THINK_OPEN, pos)
+            if start_idx < 0:
+                gui_out.append(body[pos:])
+                pos = len(body)
+            else:
+                gui_out.append(body[pos:start_idx]); think_out.append(_THINK_OPEN)
+                pos = start_idx + len(_THINK_OPEN); in_thinking = True
+    state['in_thinking'] = in_thinking
+    if end and state.get('tail'):
+        tail = state.pop('tail')
+        if state.get('in_thinking', False): think_out.append(tail)
+        else: gui_out.append(tail)
+        state['tail'] = ''
+    return ''.join(think_out), ''.join(gui_out)
+
+
+def source_needs_thinking_split(source):
+    return source not in {'console', 'task', 'reflect'}
+
+
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
     TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
@@ -146,18 +193,34 @@ class GenericAgent:
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, 
                                 handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
             try:
-                full_resp = ""; last_pos = 0
+                full_resp = visible_resp = ""; last_pos = 0
+                split_state = {"in_thinking": False, "tail": ""}
+                split_mode = source_needs_thinking_split(source)
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
                     full_resp += chunk
-                    if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
-                        display_queue.put({'next': full_resp[last_pos:] if self.inc_out else full_resp, 'source': source})
-                        last_pos = len(full_resp)
-                if self.inc_out and last_pos < len(full_resp): display_queue.put({'next': full_resp[last_pos:], 'source': source})
-                if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
-                if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
-                display_queue.put({'done': full_resp, 'source': source})
+                    if split_mode:
+                        think_chunk, gui_chunk = split_thinking_stream(chunk, split_state)
+                        if think_chunk: print(think_chunk, end='', flush=True)
+                        visible_resp += gui_chunk
+                        out_resp = visible_resp
+                    else:
+                        out_resp = full_resp
+                    if len(out_resp) - last_pos > 50 or 'LLM Running' in chunk:
+                        display_queue.put({'next': out_resp[last_pos:] if self.inc_out else out_resp, 'source': source})
+                        last_pos = len(out_resp)
+                if split_mode:
+                    think_tail, gui_tail = split_thinking_stream('', split_state, end=True)
+                    if think_tail: print(think_tail, end='', flush=True)
+                    visible_resp += gui_tail
+                    out_done = visible_resp
+                else:
+                    out_done = full_resp
+                if self.inc_out and last_pos < len(out_done): display_queue.put({'next': out_done[last_pos:], 'source': source})
+                if '</summary>' in out_done: out_done = out_done.replace('</summary>', '</summary>\n\n')
+                if '</file_content>' in out_done: out_done = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', out_done, flags=re.DOTALL)                
+                display_queue.put({'done': out_done, 'source': source})
                 self.history = handler.history_info
             except Exception as e:
                 print(f"Backend Error: {format_error(e)}")
@@ -265,7 +328,7 @@ if __name__ == '__main__':
             q = input('> ').strip()
             if not q: continue
             try:
-                dq = agent.put_task(q, source='user')
+                dq = agent.put_task(q, source='console')
                 while True:
                     item = dq.get()
                     if 'next' in item: print(item['next'], end='', flush=True)
