@@ -14,8 +14,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def _console_safe_text(text):
     """Return text safe for terminal output by dropping control chars and invalid surrogates."""
-    if text is None: return ''
-    if not isinstance(text, str): text = str(text)
+    if text is None:
+        return ''
+    if not isinstance(text, str):
+        text = str(text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     return re.sub(r'[\ud800-\udfff]', '�', text)
 
@@ -164,7 +166,8 @@ class GenericAgent:
                         display_queue.put({'next': out_text, 'source': source})
                         last_pos = len(full_resp)
                 if self.inc_out and last_pos < len(full_resp):
-                    display_queue.put({'next': _console_safe_text(full_resp[last_pos:]), 'source': source})
+                    out_text = _console_safe_text(full_resp[last_pos:])
+                    display_queue.put({'next': out_text, 'source': source})
                 if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
                 if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
                 display_queue.put({'done': _console_safe_text(full_resp), 'source': source})
