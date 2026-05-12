@@ -737,7 +737,9 @@ class CopilotSDKSession(BaseSession):
     @staticmethod
     def _stream_tail(emitted, text):
         if not text or text == emitted: return ''
-        return text[len(emitted):] if text.startswith(emitted) else text
+        if text.startswith(emitted): return text[len(emitted):]
+        print(f"[WARN] CopilotSDKSession streamed prefix mismatch: emitted={len(emitted)} final={len(text)}")
+        return text
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
@@ -812,9 +814,16 @@ class CopilotSDKSession(BaseSession):
                 q, done = queue.Queue(), object()
                 box = {"ret": None, "err": None}
                 def _runner():
-                    try: box["ret"] = asyncio.run(self._send_with_session(prompt, stream_queue=q))
+                    loop = asyncio.new_event_loop()
+                    try:
+                        asyncio.set_event_loop(loop)
+                        box["ret"] = loop.run_until_complete(self._send_with_session(prompt, stream_queue=q))
                     except Exception as e: box["err"] = e
-                    finally: q.put(done)
+                    finally:
+                        try: loop.close()
+                        finally:
+                            asyncio.set_event_loop(None)
+                            q.put(done)
                 t = threading.Thread(target=_runner); t.start()
                 while True:
                     chunk = q.get()

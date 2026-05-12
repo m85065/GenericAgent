@@ -167,10 +167,12 @@ class CopilotSDKSessionTests(unittest.TestCase):
     def test_copilot_sdk_stream_mode_yields_incremental_chunks(self):
         cfg = {"model": "gpt-5"}
         self.record["stream_chunks"] = ["stubbed ", "copilot ", "reply"]
+        self.record["reply_content"] = "stubbed copilot reply"
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
             chunks = list(session.ask("hello copilot sdk"))
         self.assertEqual(["stubbed ", "copilot ", "reply"], chunks)
+        self.assertEqual("stubbed copilot reply", "".join(chunks))
         self.assertTrue(self.record["create_session_kwargs"]["streaming"])
 
     def test_copilot_sdk_non_stream_mode_returns_plain_text(self):
