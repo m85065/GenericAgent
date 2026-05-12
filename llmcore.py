@@ -744,6 +744,8 @@ class CopilotSDKSession(BaseSession):
             sys.stderr.flush()
         except OSError:
             pass
+    def _is_session_idle_timeout(self, err):
+        return isinstance(err, TimeoutError) and "session.idle" in str(err).lower()
     def _make_on_event(self, delta_chunks, final_content, on_delta=None):
         """Return an on_event handler that collects streaming content and forwards progress to stderr."""
         log_to_console = self.cli_log_to_console
@@ -869,6 +871,13 @@ class CopilotSDKSession(BaseSession):
             yield item
         background_thread.join()
         if thread_result["err"] is not None:
+            if self._is_session_idle_timeout(thread_result["err"]):
+                if streamed:
+                    self._warn_cli_log("[WARN] Copilot session idle timeout; using streamed partial output.")
+                    return [{"type": "text", "text": ""}]
+                warn = "[WARN] Copilot session idle timeout after 60s; please retry."
+                yield warn
+                return [{"type": "text", "text": warn}]
             err = f"!!!Error: {type(thread_result['err']).__name__}: {thread_result['err']}"
             yield err
             return [{"type": "text", "text": err}]

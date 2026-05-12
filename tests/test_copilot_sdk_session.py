@@ -52,6 +52,8 @@ class CopilotSDKSessionTests(unittest.TestCase):
                             type=types.SimpleNamespace(value="tool.execution_progress"),
                             data=types.SimpleNamespace(progress_message=event_progress),
                         ))
+                if record.get("raise_timeout"):
+                    raise TimeoutError("Timeout after 60.0s waiting for session.idle")
                 return types.SimpleNamespace(data=types.SimpleNamespace(content=final_message))
 
             async def disconnect(self):
@@ -232,6 +234,26 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot sdk progress event", stderr.getvalue())
+
+    def test_copilot_sdk_session_idle_timeout_uses_streamed_partial(self):
+        cfg = {"model": "gpt-5"}
+        self.record["message_content"] = "partial before timeout"
+        self.record["raise_timeout"] = True
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("partial before timeout", output)
+        self.assertNotIn("!!!Error:", output)
+
+    def test_copilot_sdk_session_idle_timeout_without_stream_shows_warning(self):
+        cfg = {"model": "gpt-5"}
+        self.record["message_content"] = ""
+        self.record["raise_timeout"] = True
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("[WARN] Copilot session idle timeout", output)
+        self.assertNotIn("!!!Error:", output)
 
 
 if __name__ == "__main__":
