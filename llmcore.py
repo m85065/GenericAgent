@@ -732,11 +732,8 @@ class CopilotSDKSession(BaseSession):
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _session_event_field(self, data, *names):
         for name in names:
-            if isinstance(data, dict) and name in data:
-                value = data[name]
-                if value is not None: return value
-            value = getattr(data, name, None)
-            if value is not None: return value
+            if isinstance(data, dict) and name in data: return data[name]
+            if hasattr(data, name): return getattr(data, name)
         return None
     def _emit_session_progress_event(self, event):
         if not self.cli_log_to_console: return
@@ -757,7 +754,7 @@ class CopilotSDKSession(BaseSession):
         if not callable(on): return None
         try: return on(self._emit_session_progress_event)
         except Exception as e:
-            print(f"[WARN] CopilotSDKSession on_event bind failed: {type(e).__name__}: {e}")
+            print(f"[WARN] CopilotSDKSession session.on() bind failed: {type(e).__name__}: {e}")
             return None
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
