@@ -732,9 +732,18 @@ class CopilotSDKSession(BaseSession):
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _session_event_field(self, data, *names):
         for name in names:
-            if isinstance(data, dict) and name in data: return data[name]
+            if isinstance(data, dict):
+                if name in data: return data[name]
+                continue
             if hasattr(data, name): return getattr(data, name)
         return None
+    def _warn_cli_log(self, message):
+        try:
+            text = str(message)
+            sys.stderr.write(text if text.endswith('\n') else text + '\n')
+            sys.stderr.flush()
+        except OSError:
+            pass
     def _emit_session_progress_event(self, event):
         if not self.cli_log_to_console: return
         event_type = getattr(event, "type", "")
@@ -754,7 +763,7 @@ class CopilotSDKSession(BaseSession):
         if not callable(on): return None
         try: return on(self._emit_session_progress_event)
         except Exception as e:
-            print(f"[WARN] CopilotSDKSession session.on() bind failed: {type(e).__name__}: {e}")
+            self._warn_cli_log(f"[WARN] CopilotSDKSession session.on() bind failed: {type(e).__name__}: {e}")
             return None
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -821,7 +830,7 @@ class CopilotSDKSession(BaseSession):
             finally:
                 if callable(unsubscribe):
                     try: unsubscribe()
-                    except Exception as e: print(f"[WARN] CopilotSDKSession unsubscribe failed: {type(e).__name__}: {e}")
+                    except Exception as e: self._warn_cli_log(f"[WARN] CopilotSDKSession unsubscribe failed: {type(e).__name__}: {e}")
                 if session is not None:
                     try: await session.disconnect()
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
