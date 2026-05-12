@@ -730,6 +730,31 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.provider = cfg.get('provider')
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
+    def _session_event_field(self, data, *names):
+        for name in names:
+            if isinstance(data, dict) and name in data: return data[name]
+            value = getattr(data, name, None)
+            if value is not None: return value
+        return None
+    def _emit_session_progress_event(self, event):
+        if not self.cli_log_to_console: return
+        event_type = getattr(event, "type", "")
+        event_type = str(getattr(event_type, "value", event_type) or "")
+        if event_type != "tool.execution_progress": return
+        data = getattr(event, "data", None)
+        message = self._session_event_field(data, "progress_message", "progressMessage")
+        if not message: return
+        try:
+            text = str(message)
+            sys.stderr.write(text if text.endswith('\n') else text + '\n')
+            sys.stderr.flush()
+        except OSError:
+            pass
+    def _bind_session_progress_logs(self, session):
+        on = getattr(session, "on", None)
+        if not callable(on): return None
+        try: return on(self._emit_session_progress_event)
+        except Exception: return None
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
@@ -783,14 +808,19 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             session = None
+            unsubscribe = None
             kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
             try:
                 session = await client.create_session(**kwargs)
+                unsubscribe = self._bind_session_progress_logs(session)
                 reply = await session.send_and_wait(prompt)
             finally:
+                if callable(unsubscribe):
+                    try: unsubscribe()
+                    except Exception: pass
                 if session is not None:
                     try: await session.disconnect()
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")

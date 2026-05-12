@@ -34,8 +34,24 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 self.kwargs = kwargs
 
         class FakeSession:
+            def __init__(self):
+                self._event_handlers = []
+            def on(self, handler):
+                self._event_handlers.append(handler)
+                def _unsubscribe():
+                    if handler in self._event_handlers:
+                        self._event_handlers.remove(handler)
+                return _unsubscribe
             async def send_and_wait(self, prompt):
                 record["prompt"] = prompt
+                event_progress = record.get("event_progress_output")
+                if event_progress:
+                    event = types.SimpleNamespace(
+                        type=types.SimpleNamespace(value="tool.execution_progress"),
+                        data=types.SimpleNamespace(progress_message=event_progress),
+                    )
+                    for handler in list(self._event_handlers):
+                        handler(event)
                 return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
 
             async def disconnect(self):
@@ -142,6 +158,16 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot outer progress log", stderr.getvalue())
+
+    def test_copilot_sdk_logs_progress_from_session_events(self):
+        cfg = {"model": "gpt-5"}
+        self.record["event_progress_output"] = "copilot sdk progress event\n"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertIn("copilot sdk progress event", stderr.getvalue())
 
 
 if __name__ == "__main__":
