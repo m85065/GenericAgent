@@ -13,6 +13,7 @@ from ga import GenericAgentHandler, smart_format, get_global_memory, format_erro
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def _console_safe_text(text):
+    """Return text safe for terminal output by dropping control chars and invalid surrogates."""
     if text is None: return ''
     if not isinstance(text, str): text = str(text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
