@@ -729,6 +729,7 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_level = cfg.get('cli_log_level')
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.provider = cfg.get('provider')
+        self.base_delay = max(0.0, float(cfg.get('base_delay', 1.5)))
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -786,10 +787,19 @@ class CopilotSDKSession(BaseSession):
             if isinstance(data, dict): return str(data.get("content", ""))
             return str(getattr(data, "content", data) or "")
     def raw_ask(self, messages):
-        try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
-        except Exception as e:
-            err = f"!!!Error: {type(e).__name__}: {e}"
-            yield err; return [{"type": "text", "text": err}]
+        text = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
+                break
+            except Exception as e:
+                err = f"!!!Error: {type(e).__name__}: {e}"
+                if attempt < self.max_retries:
+                    delay = min(30.0, self.base_delay * (1.5 ** attempt))
+                    print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
+                    if delay > 0: time.sleep(delay)
+                    continue
+                yield err; return [{"type": "text", "text": err}]
         if text: yield text
         return [{"type": "text", "text": text or ""}]
 

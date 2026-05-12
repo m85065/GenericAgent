@@ -35,6 +35,11 @@ class CopilotSDKSessionTests(unittest.TestCase):
 
         class FakeSession:
             async def send_and_wait(self, prompt):
+                record["send_and_wait_calls"] = record.get("send_and_wait_calls", 0) + 1
+                remaining = int(record.get("fail_send_and_wait_times", 0) or 0)
+                if remaining > 0:
+                    record["fail_send_and_wait_times"] = remaining - 1
+                    raise RuntimeError("transient send failure")
                 record["prompt"] = prompt
                 return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
 
@@ -117,6 +122,25 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
         self.assertEqual("", stderr.getvalue())
+
+    def test_copilot_sdk_ask_retries_transient_send_failures(self):
+        cfg = {"model": "gpt-5", "max_retries": 2, "base_delay": 0}
+        self.record["fail_send_and_wait_times"] = 1
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertNotIn("!!!Error:", output)
+        self.assertEqual(2, self.record.get("send_and_wait_calls"))
+
+    def test_copilot_sdk_ask_emits_error_after_retry_exhaustion(self):
+        cfg = {"model": "gpt-5", "max_retries": 1, "base_delay": 0}
+        self.record["fail_send_and_wait_times"] = 5
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("!!!Error: RuntimeError: transient send failure", output)
+        self.assertEqual(2, self.record.get("send_and_wait_calls"))
 
 
 if __name__ == "__main__":
