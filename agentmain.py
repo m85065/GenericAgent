@@ -11,6 +11,13 @@ from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
+def _console_safe_text(text):
+    if text is None: return ''
+    if not isinstance(text, str): text = str(text)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    return re.sub(r'[\ud800-\udfff]', '�', text)
+
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
     TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
@@ -152,16 +159,18 @@ class GenericAgent:
                     if self.stop_sig: break
                     full_resp += chunk
                     if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
-                        display_queue.put({'next': full_resp[last_pos:] if self.inc_out else full_resp, 'source': source})
+                        out_text = _console_safe_text(full_resp[last_pos:] if self.inc_out else full_resp)
+                        display_queue.put({'next': out_text, 'source': source})
                         last_pos = len(full_resp)
-                if self.inc_out and last_pos < len(full_resp): display_queue.put({'next': full_resp[last_pos:], 'source': source})
+                if self.inc_out and last_pos < len(full_resp):
+                    display_queue.put({'next': _console_safe_text(full_resp[last_pos:]), 'source': source})
                 if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
                 if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
-                display_queue.put({'done': full_resp, 'source': source})
+                display_queue.put({'done': _console_safe_text(full_resp), 'source': source})
                 self.history = handler.history_info
             except Exception as e:
                 print(f"Backend Error: {format_error(e)}")
-                display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source})
+                display_queue.put({'done': _console_safe_text(full_resp + f'\n```\n{format_error(e)}\n```'), 'source': source})
             finally:
                 if self.stop_sig: print('User aborted the task.')
                 self.is_running = self.stop_sig = False
