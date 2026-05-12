@@ -42,6 +42,9 @@ RESTORE_BLOCK_RE = re.compile(
 )
 HISTORY_RE = re.compile(r"<history>\s*(.*?)\s*</history>", re.DOTALL)
 SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.DOTALL)
+# Sentence boundary for streaming preview:
+# - supports common zh/en punctuation and newline
+# - excludes decimal dots like 3.14 via lookaround guards on "."
 _SENTENCE_END_RE = re.compile(r"(?:[。！？!?…]+|(?<!\d)\.(?!\d)|\n)")
 
 

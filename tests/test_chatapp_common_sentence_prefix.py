@@ -29,3 +29,7 @@ def test_sentence_prefix_keeps_decimal_point_unfinished():
 
 def test_sentence_prefix_uses_newline_as_boundary():
     assert completed_sentence_prefix("line1\nline2") == "line1"
+
+
+def test_sentence_prefix_handles_punctuation_before_newline():
+    assert completed_sentence_prefix("sentence.\nmore text") == "sentence."
