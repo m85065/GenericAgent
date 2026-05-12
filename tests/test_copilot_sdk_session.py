@@ -49,6 +49,10 @@ class CopilotSDKSessionTests(unittest.TestCase):
                     get_stderr_output=lambda: record.get("stderr_output", ""),
                     get_progress_output=lambda: record.get("progress_output", ""),
                 )
+            def get_stderr_output(self):
+                return record.get("outer_stderr_output", "")
+            def get_progress_output(self):
+                return record.get("outer_progress_output", "")
 
             async def __aenter__(self):
                 return self
@@ -128,6 +132,16 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot cli progress: planning...", stderr.getvalue())
+
+    def test_copilot_sdk_logs_outer_client_progress_output_to_console(self):
+        cfg = {"model": "gpt-5"}
+        self.record["outer_progress_output"] = "copilot outer progress log\n"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertIn("copilot outer progress log", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -733,15 +733,21 @@ class CopilotSDKSession(BaseSession):
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
-        if rpc_client is None: return
+        targets = [t for t in (client, rpc_client) if t is not None]
         chunks, seen = [], set()
-        for getter_name in ("get_progress_output", "get_stderr_output", "get_stdout_output"):
-            getter = getattr(rpc_client, getter_name, None)
-            if not callable(getter): continue
-            logs = getter()
-            if not logs or logs in seen: continue
-            chunks.append(logs)
-            seen.add(logs)
+        for target in targets:
+            for getter_name in ("get_progress_output", "get_stderr_output", "get_stdout_output"):
+                getter = getattr(target, getter_name, None)
+                if not callable(getter): continue
+                logs = getter()
+                if not logs or logs in seen: continue
+                chunks.append(logs)
+                seen.add(logs)
+            for attr_name in ("progress_output", "stderr_output", "stdout_output"):
+                logs = getattr(target, attr_name, "")
+                if not logs or logs in seen: continue
+                chunks.append(logs)
+                seen.add(logs)
         if not chunks: return
         try:
             merged_logs = "".join(chunks)
