@@ -245,7 +245,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("stubbed copilot reply", output)
         self.assertIn("copilot sdk progress event", stderr.getvalue())
 
-    def test_copilot_sdk_session_idle_timeout_discards_partial_and_returns_nothing(self):
+    def test_copilot_sdk_session_idle_timeout_returns_partial_subagent_response(self):
         cfg = {"model": "gpt-5"}
         self.record["message_content"] = "partial before timeout"
         self.record["raise_timeout"] = True
@@ -253,8 +253,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
             session = llmcore.resolve_session("copilot_sdk_config")
             with patch("sys.stderr", new_callable=io.StringIO) as stderr:
                 output = "".join(session.ask("hello copilot sdk"))
-        self.assertEqual("", output)
-        self.assertNotIn("partial before timeout", output)
+        self.assertIn("partial before timeout", output)
         self.assertNotIn("!!!Error:", output)
         self.assertIn("[WARN] Copilot session idle timeout", stderr.getvalue())
 
