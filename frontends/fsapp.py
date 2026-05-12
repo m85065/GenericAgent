@@ -233,7 +233,7 @@ APP_ID = str(mykeys.get("fs_app_id", "") or "").strip()
 APP_SECRET = str(mykeys.get("fs_app_secret", "") or "").strip()
 ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
 PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
-AGENT_TIMEOUT_SEC = 900
+AGENT_TIMEOUT_SEC = None
 
 agent = GeneraticAgent()
 threading.Thread(target=agent.run, daemon=True).start()
@@ -618,7 +618,7 @@ def handle_message(data):
                     agent.abort()
                     card.fail("已停止")
                     break
-                if time.time() - start > AGENT_TIMEOUT_SEC:
+                if AGENT_TIMEOUT_SEC and time.time() - start > AGENT_TIMEOUT_SEC:
                     agent.abort()
                     card.fail("任务超时")
                     break
