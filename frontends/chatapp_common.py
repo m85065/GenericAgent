@@ -42,6 +42,7 @@ RESTORE_BLOCK_RE = re.compile(
 )
 HISTORY_RE = re.compile(r"<history>\s*(.*?)\s*</history>", re.DOTALL)
 SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.DOTALL)
+_SENTENCE_END_RE = re.compile(r"(?:[。！？!?…]+|(?<!\d)\.(?!\d)|\n)")
 
 
 def clean_reply(text):
@@ -67,6 +68,18 @@ def split_text(text, limit):
         parts.append(text[:cut].rstrip())
         text = text[cut:].lstrip()
     return parts + ([text] if text else []) or ["..."]
+
+
+def completed_sentence_prefix(text):
+    content = text or ""
+    if not content.strip():
+        return ""
+    last_end = -1
+    for match in _SENTENCE_END_RE.finditer(content):
+        last_end = match.end()
+    if last_end < 0:
+        return ""
+    return content[:last_end].rstrip()
 
 
 def _restore_log_files():

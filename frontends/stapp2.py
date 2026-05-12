@@ -17,6 +17,7 @@ except (ImportError, AttributeError):
 import time, json, re, threading, queue
 from datetime import datetime
 from agentmain import GeneraticAgent
+from chatapp_common import completed_sentence_prefix
 
 st.set_page_config(page_title="Cowork", layout="wide")
 
@@ -1034,7 +1035,8 @@ def render_streaming_area():
             agent.abort(); st.session_state.stopping = True; st.toast("已发送停止信号"); st.rerun()
     reply_ts = st.session_state.reply_ts
     with st.empty().container():
-        segments = _get_response_segments(st.session_state.partial_response)
+        preview = completed_sentence_prefix(st.session_state.partial_response)
+        segments = _get_response_segments(preview)
         for i, seg in enumerate(segments): render_message("assistant", seg + ("" if i < len(segments) - 1 else "▌"), ts=reply_ts, unsafe_allow_html=False)
     if poll_agent_output(): finish_streaming_message()
     else: time.sleep(0.2)
@@ -1046,4 +1048,3 @@ if prompt := st.chat_input("请输入指令", disabled=st.session_state.streamin
     st.session_state.messages.append({"role": "user", "content": prompt, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     start_agent_task(prompt)
     st.rerun()
-

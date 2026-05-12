@@ -200,10 +200,13 @@ def agent_backend_stream(prompt=None):
 def render_main_stream(prompt=None):
     """Render the assistant bubble for the main task (new or resumed). Saves final to messages."""
     with st.chat_message("assistant"):
-        frozen = 0; live = st.empty(); response = ''
+        frozen = 0; live = st.empty(); response = ''; stream_visible = ''
         CURSOR = ' ▌'
         for response in agent_backend_stream(prompt):
-            segs = fold_turns(response)
+            completed = chatapp_common.completed_sentence_prefix(response)
+            if completed:
+                stream_visible = completed
+            segs = fold_turns(stream_visible)
             n_done = max(0, len(segs) - 1)
             while frozen < n_done:
                 with live.container(): render_segments([segs[frozen]])
