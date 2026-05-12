@@ -177,9 +177,6 @@ class CopilotSDKSessionTests(unittest.TestCase):
         cfg = {"model": "gpt-5"}
         record = self.record
 
-        # Override create_session so send_and_wait fires three separate deltas
-        original_create = None
-
         class MultiDeltaSession:
             async def send_and_wait(self, prompt):
                 on_event = record.get("_on_event")
@@ -194,21 +191,9 @@ class CopilotSDKSessionTests(unittest.TestCase):
             async def disconnect(self):
                 record["disconnected"] = True
 
-        saved_create = None
-
-        def patched_create(**kwargs):
-            record["_on_event"] = kwargs.get("on_event")
-
-            async def _inner(**kw):
-                return MultiDeltaSession()
-            import asyncio
-            return _inner(**kwargs)
-
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
-            # Patch FakeCopilotClient.create_session at the stub level
-            import sys as _sys
-            copilot_mod = _sys.modules["copilot"]
+            copilot_mod = sys.modules["copilot"]
             orig_cls = copilot_mod.CopilotClient
 
             class PatchedClient(orig_cls):
@@ -216,9 +201,9 @@ class CopilotSDKSessionTests(unittest.TestCase):
                     record["_on_event"] = kwargs.get("on_event")
                     return MultiDeltaSession()
 
-            with patch.dict(_sys.modules, {"copilot": type(copilot_mod)("copilot")}):
-                _sys.modules["copilot"].CopilotClient = PatchedClient
-                _sys.modules["copilot"].SubprocessConfig = copilot_mod.SubprocessConfig
+            with patch.dict(sys.modules, {"copilot": type(copilot_mod)("copilot")}):
+                sys.modules["copilot"].CopilotClient = PatchedClient
+                sys.modules["copilot"].SubprocessConfig = copilot_mod.SubprocessConfig
                 with patch("sys.stderr", new_callable=io.StringIO) as stderr:
                     output = "".join(session.ask("hello copilot sdk"))
 

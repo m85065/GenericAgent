@@ -756,8 +756,11 @@ class CopilotSDKSession(BaseSession):
                 if delta:
                     delta_chunks.append(delta)
                     if log_to_console:
-                        try: sys.stderr.write(delta); sys.stderr.flush()
-                        except OSError: pass
+                        try:
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
+                        except OSError:
+                            pass
             elif event_type == "assistant.message":
                 content = get_field(data, "content")
                 if content: final_content.append(content)
