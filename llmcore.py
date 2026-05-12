@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio, queue
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
@@ -744,7 +744,7 @@ class CopilotSDKSession(BaseSession):
             sys.stderr.flush()
         except OSError:
             pass
-    def _make_on_event(self, delta_chunks, final_content):
+    def _make_on_event(self, delta_chunks, final_content, on_delta=None):
         """Return an on_event handler that collects streaming content and forwards progress to stderr."""
         log_to_console = self.cli_log_to_console
         get_field = self._session_event_field
@@ -755,6 +755,9 @@ class CopilotSDKSession(BaseSession):
                 delta = get_field(data, "delta_content", "deltaContent")
                 if delta:
                     delta_chunks.append(delta)
+                    if callable(on_delta):
+                        try: on_delta(delta)
+                        except Exception: pass
                     if log_to_console:
                         try:
                             sys.stderr.write(delta)
@@ -807,7 +810,7 @@ class CopilotSDKSession(BaseSession):
                 content = "\n".join(parts)
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
         return "\n\n".join(lines).strip()
-    async def _send_with_session(self, prompt):
+    async def _send_with_session(self, prompt, on_delta=None):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
         subprocess_kwargs = {}
@@ -821,7 +824,7 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         delta_chunks = []
         final_content = []
-        on_event = self._make_on_event(delta_chunks, final_content)
+        on_event = self._make_on_event(delta_chunks, final_content, on_delta=on_delta)
         async with CopilotClient(config=cfg) as client:
             session = None
             kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": True, "on_event": on_event}
@@ -846,12 +849,31 @@ class CopilotSDKSession(BaseSession):
         if final_content: return final_content[-1]
         return ""
     def raw_ask(self, messages):
-        try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
-        except Exception as e:
-            err = f"!!!Error: {type(e).__name__}: {e}"
-            yield err; return [{"type": "text", "text": err}]
-        if text: yield text
-        return [{"type": "text", "text": text or ""}]
+        prompt = self._messages_to_prompt(messages)
+        q = queue.Queue()
+        done = object()
+        box = {"text": "", "err": None}
+        def _emit_delta(delta):
+            if delta: q.put(delta)
+        def _runner():
+            try: box["text"] = _run_async_sync(self._send_with_session(prompt, on_delta=_emit_delta))
+            except Exception as e: box["err"] = e
+            finally: q.put(done)
+        t = threading.Thread(target=_runner, daemon=True); t.start()
+        streamed = False
+        while True:
+            item = q.get()
+            if item is done: break
+            streamed = True
+            yield item
+        t.join()
+        if box["err"] is not None:
+            err = f"!!!Error: {type(box['err']).__name__}: {box['err']}"
+            yield err
+            return [{"type": "text", "text": err}]
+        text = box["text"] or ""
+        if text and not streamed: yield text
+        return [{"type": "text", "text": text}]
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
