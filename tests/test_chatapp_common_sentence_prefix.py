@@ -33,3 +33,11 @@ def test_sentence_prefix_uses_newline_as_boundary():
 
 def test_sentence_prefix_handles_punctuation_before_newline():
     assert completed_sentence_prefix("sentence.\nmore text") == "sentence."
+
+
+def test_sentence_prefix_keeps_closing_quote_after_punctuation():
+    assert completed_sentence_prefix('他说：“你好。”下一句') == '他说：“你好。”'
+
+
+def test_sentence_prefix_supports_semicolon_boundary():
+    assert completed_sentence_prefix("first clause; second clause") == "first clause;"

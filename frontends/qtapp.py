@@ -29,7 +29,7 @@ from PySide6.QtGui import (
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agentmain import GeneraticAgent
-from chatapp_common import FILE_HINT, HELP_TEXT, clean_reply, build_done_text, format_restore
+from chatapp_common import FILE_HINT, HELP_TEXT, clean_reply, build_done_text, format_restore, completed_sentence_prefix
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2080,7 +2080,8 @@ class ChatPanel(QWidget):
                 if "next" in item:
                     self._streaming_text = item["next"]
                     if self._streaming_row:
-                        self._streaming_row.set_text(self._streaming_text + " ▌")
+                        preview = completed_sentence_prefix(self._streaming_text) or self._streaming_text
+                        self._streaming_row.set_text(preview + " ▌")
                     self._update_token_usage()
                     self._scroll_bottom()
                 if "done" in item:
