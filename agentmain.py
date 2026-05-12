@@ -19,7 +19,10 @@ def _console_safe_text(text):
     if not isinstance(text, str):
         text = str(text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    return re.sub(r'[\ud800-\udfff]', '�', text)
+    try:
+        return text.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
+    except UnicodeError:
+        return text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
 
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
