@@ -837,8 +837,11 @@ class CopilotSDKSession(BaseSession):
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
                 self._emit_cli_logs(client)
         if self.cli_log_to_console and delta_chunks and not delta_chunks[-1].endswith('\n'):
-            try: sys.stderr.write('\n'); sys.stderr.flush()
-            except OSError: pass
+            try:
+                sys.stderr.write('\n')
+                sys.stderr.flush()
+            except OSError:
+                pass
         if delta_chunks: return ''.join(delta_chunks)
         if final_content: return final_content[-1]
         return ""
