@@ -156,7 +156,10 @@ class GenericAgent:
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, 
                                 handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
             try:
-                full_resp = ""; safe_resp = ""; last_pos = 0; last_safe_pos = 0
+                full_resp = ""
+                safe_resp = ""
+                last_pos = 0
+                last_safe_pos = 0
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
@@ -165,7 +168,8 @@ class GenericAgent:
                     if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
                         out_text = safe_resp[last_safe_pos:] if self.inc_out else safe_resp
                         display_queue.put({'next': out_text, 'source': source})
-                        last_pos, last_safe_pos = len(full_resp), len(safe_resp)
+                        last_pos = len(full_resp)
+                        last_safe_pos = len(safe_resp)
                 if self.inc_out and last_pos < len(full_resp):
                     out_text = safe_resp[last_safe_pos:]
                     display_queue.put({'next': out_text, 'source': source})
