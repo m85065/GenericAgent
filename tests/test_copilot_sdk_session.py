@@ -172,6 +172,61 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("Hello from Copilot!", output)
         self.assertIn("Hello from Copilot!", stderr.getvalue())
 
+    def test_copilot_sdk_streaming_multi_delta_accumulates_correctly(self):
+        """Multiple streaming delta events should be joined in order for both output and stderr."""
+        cfg = {"model": "gpt-5"}
+        record = self.record
+
+        # Override create_session so send_and_wait fires three separate deltas
+        original_create = None
+
+        class MultiDeltaSession:
+            async def send_and_wait(self, prompt):
+                on_event = record.get("_on_event")
+                if on_event:
+                    for chunk in ["Hello", " from", " Copilot!"]:
+                        on_event(types.SimpleNamespace(
+                            type=types.SimpleNamespace(value="assistant.message_delta"),
+                            data=types.SimpleNamespace(delta_content=chunk),
+                        ))
+                return types.SimpleNamespace(data=types.SimpleNamespace(content=""))
+
+            async def disconnect(self):
+                record["disconnected"] = True
+
+        saved_create = None
+
+        def patched_create(**kwargs):
+            record["_on_event"] = kwargs.get("on_event")
+
+            async def _inner(**kw):
+                return MultiDeltaSession()
+            import asyncio
+            return _inner(**kwargs)
+
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            # Patch FakeCopilotClient.create_session at the stub level
+            import sys as _sys
+            copilot_mod = _sys.modules["copilot"]
+            orig_cls = copilot_mod.CopilotClient
+
+            class PatchedClient(orig_cls):
+                async def create_session(self, **kwargs):
+                    record["_on_event"] = kwargs.get("on_event")
+                    return MultiDeltaSession()
+
+            with patch.dict(_sys.modules, {"copilot": type(copilot_mod)("copilot")}):
+                _sys.modules["copilot"].CopilotClient = PatchedClient
+                _sys.modules["copilot"].SubprocessConfig = copilot_mod.SubprocessConfig
+                with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                    output = "".join(session.ask("hello copilot sdk"))
+
+        self.assertEqual("Hello from Copilot!", output)
+        self.assertIn("Hello", stderr.getvalue())
+        self.assertIn(" from", stderr.getvalue())
+        self.assertIn(" Copilot!", stderr.getvalue())
+
     def test_copilot_sdk_logs_progress_from_tool_execution_events(self):
         cfg = {"model": "gpt-5"}
         self.record["event_progress_output"] = "copilot sdk progress event\n"
