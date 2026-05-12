@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio, queue
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
@@ -757,7 +757,7 @@ class CopilotSDKSession(BaseSession):
                 content = "\n".join(parts)
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
         return "\n\n".join(lines).strip()
-    async def _send_with_session(self, prompt):
+    async def _send_with_session(self, prompt, stream_queue=None):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
         subprocess_kwargs = {}
@@ -771,14 +771,25 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             session = None
-            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+            unsubscribe = None
+            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": self.stream}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
             try:
                 session = await client.create_session(**kwargs)
-                reply = await session.send_and_wait(prompt)
+                if stream_queue is not None:
+                    def _on_event(event):
+                        data = getattr(event, "data", event)
+                        delta = getattr(data, "delta_content", None)
+                        if isinstance(delta, str) and delta: stream_queue.put(delta)
+                    on = getattr(session, "on", None)
+                    if callable(on): unsubscribe = on(_on_event)
+                reply = await session.send_and_wait(prompt, timeout=float(self.read_timeout))
             finally:
+                if callable(unsubscribe):
+                    try: unsubscribe()
+                    except Exception as e: print(f"[WARN] CopilotSDKSession unsubscribe failed: {type(e).__name__}: {e}")
                 if session is not None:
                     try: await session.disconnect()
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
@@ -787,10 +798,41 @@ class CopilotSDKSession(BaseSession):
             if isinstance(data, dict): return str(data.get("content", ""))
             return str(getattr(data, "content", data) or "")
     def raw_ask(self, messages):
-        text = None
+        prompt = self._messages_to_prompt(messages)
+        if self.stream:
+            emitted = ''
+            for attempt in range(self.max_retries + 1):
+                q, done = queue.Queue(), object()
+                box = {"ret": None, "err": None}
+                def _runner():
+                    try: box["ret"] = asyncio.run(self._send_with_session(prompt, stream_queue=q))
+                    except Exception as e: box["err"] = e
+                    finally: q.put(done)
+                t = threading.Thread(target=_runner, daemon=True); t.start()
+                while True:
+                    chunk = q.get()
+                    if chunk is done: break
+                    emitted += chunk; yield chunk
+                t.join()
+                if box["err"] is None:
+                    text = box["ret"] or ''
+                    if text and text != emitted:
+                        chunk = text[len(emitted):] if text.startswith(emitted) else text
+                        if chunk:
+                            emitted += chunk; yield chunk
+                    return [{"type": "text", "text": text or emitted}]
+                err = f"!!!Error: {type(box['err']).__name__}: {box['err']}"
+                if emitted:
+                    yield err; return [{"type": "text", "text": emitted + err}]
+                if attempt < self.max_retries:
+                    delay = min(30.0, self.base_delay * (1.5 ** attempt))
+                    print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
+                    if delay > 0: time.sleep(delay)
+                    continue
+                yield err; return [{"type": "text", "text": err}]
         for attempt in range(self.max_retries + 1):
             try:
-                text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
+                text = _run_async_sync(self._send_with_session(prompt))
                 break
             except Exception as e:
                 err = f"!!!Error: {type(e).__name__}: {e}"

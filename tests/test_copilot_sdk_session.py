@@ -34,14 +34,35 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 self.kwargs = kwargs
 
         class FakeSession:
-            async def send_and_wait(self, prompt):
+            def __init__(self):
+                self._handlers = []
+
+            def on(self, handler):
+                self._handlers.append(handler)
+
+                def unsubscribe():
+                    if handler in self._handlers:
+                        self._handlers.remove(handler)
+
+                return unsubscribe
+
+            async def send_and_wait(self, prompt, **kwargs):
                 record["send_and_wait_calls"] = record.get("send_and_wait_calls", 0) + 1
+                record["send_and_wait_kwargs"] = {"prompt": prompt, **kwargs}
                 remaining = int(record.get("fail_send_and_wait_times", 0) or 0)
                 if remaining > 0:
                     record["fail_send_and_wait_times"] = remaining - 1
                     raise RuntimeError("transient send failure")
                 record["prompt"] = prompt
-                return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
+                for delta in record.get("stream_chunks", []):
+                    evt = types.SimpleNamespace(data=types.SimpleNamespace(delta_content=delta))
+                    for handler in list(self._handlers):
+                        handler(evt)
+                reply_content = record.get("reply_content", "stubbed copilot reply")
+                evt = types.SimpleNamespace(data=types.SimpleNamespace(content=reply_content))
+                for handler in list(self._handlers):
+                    handler(evt)
+                return types.SimpleNamespace(data=types.SimpleNamespace(content=reply_content))
 
             async def disconnect(self):
                 record["disconnected"] = True
@@ -93,6 +114,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
 
         self.assertIn("stubbed copilot reply", output)
         self.assertEqual(self.record["create_session_kwargs"]["model"], "gpt-5")
+        self.assertTrue(self.record["create_session_kwargs"]["streaming"])
         self.assertIn("on_permission_request", self.record["create_session_kwargs"])
         self.assertEqual(self.record["subprocess_kwargs"]["github_token"], "ghp_test")
         self.assertTrue(self.record.get("disconnected"))
@@ -141,6 +163,23 @@ class CopilotSDKSessionTests(unittest.TestCase):
             output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("!!!Error: RuntimeError: transient send failure", output)
         self.assertEqual(2, self.record.get("send_and_wait_calls"))
+
+    def test_copilot_sdk_stream_mode_yields_incremental_chunks(self):
+        cfg = {"model": "gpt-5"}
+        self.record["stream_chunks"] = ["stubbed ", "copilot ", "reply"]
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            chunks = list(session.ask("hello copilot sdk"))
+        self.assertEqual(["stubbed ", "copilot ", "reply"], chunks)
+        self.assertTrue(self.record["create_session_kwargs"]["streaming"])
+
+    def test_copilot_sdk_non_stream_mode_returns_plain_text(self):
+        cfg = {"model": "gpt-5", "stream": False}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = session.ask("hello copilot sdk")
+        self.assertEqual("stubbed copilot reply", output)
+        self.assertFalse(self.record["create_session_kwargs"]["streaming"])
 
 
 if __name__ == "__main__":
