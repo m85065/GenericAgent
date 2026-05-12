@@ -251,9 +251,22 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.record["raise_timeout"] = True
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
-            output = "".join(session.ask("hello copilot sdk"))
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("[WARN] Copilot session idle timeout", output)
+        self.assertIn("[WARN] Copilot session idle timeout", stderr.getvalue())
         self.assertNotIn("!!!Error:", output)
+
+    def test_copilot_sdk_non_stream_returns_result_to_gui_and_console(self):
+        cfg = {"model": "gpt-5", "stream": False}
+        self.record["message_content"] = ""
+        self.record["final_message_content"] = "final non-stream result"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = session.ask("hello copilot sdk")
+        self.assertEqual("final non-stream result", output)
+        self.assertIn("final non-stream result", stderr.getvalue())
 
 
 if __name__ == "__main__":

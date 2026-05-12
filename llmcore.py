@@ -835,7 +835,11 @@ class CopilotSDKSession(BaseSession):
             if self.provider is not None: kwargs["provider"] = self.provider
             try:
                 session = await client.create_session(**kwargs)
-                await session.send_and_wait(prompt)
+                response = await session.send_and_wait(prompt)
+                response_data = getattr(response, "data", None)
+                response_content = self._session_event_field(response_data, "content")
+                if response_content and not final_content:
+                    final_content.append(response_content)
             finally:
                 if session is not None:
                     try: await session.disconnect()
@@ -848,7 +852,11 @@ class CopilotSDKSession(BaseSession):
             except OSError:
                 pass
         if delta_chunks: return ''.join(delta_chunks)
-        if final_content: return final_content[-1]
+        if final_content:
+            text = final_content[-1]
+            if self.cli_log_to_console and text:
+                self._warn_cli_log(text)
+            return text
         return ""
     def raw_ask(self, messages):
         prompt = self._messages_to_prompt(messages)
@@ -876,6 +884,7 @@ class CopilotSDKSession(BaseSession):
                     self._warn_cli_log("[WARN] Copilot session idle timeout; using streamed partial output.")
                     return [{"type": "text", "text": ""}]
                 warn = "[WARN] Copilot session idle timeout; please retry."
+                self._warn_cli_log(warn)
                 yield warn
                 return [{"type": "text", "text": warn}]
             err = f"!!!Error: {type(thread_result['err']).__name__}: {thread_result['err']}"
