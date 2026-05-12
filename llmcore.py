@@ -713,6 +713,8 @@ class NativeOAISession(NativeClaudeSession):
         return (yield from _openai_stream(self, _msgs_claude2oai(messages)))
 
 class CopilotSDKSession(BaseSession):
+    _BACKOFF_FACTOR = 1.5
+    _MAX_RETRY_DELAY = 30.0
     def __init__(self, cfg):
         github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
         ccfg = dict(cfg)
@@ -731,6 +733,11 @@ class CopilotSDKSession(BaseSession):
         self.provider = cfg.get('provider')
         self.base_delay = max(0.0, float(cfg.get('base_delay', 1.5)))
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
+    def _retry_delay(self, attempt): return min(self._MAX_RETRY_DELAY, self.base_delay * (self._BACKOFF_FACTOR ** attempt))
+    @staticmethod
+    def _stream_tail(emitted, text):
+        if not text or text == emitted: return ''
+        return text[len(emitted):] if text.startswith(emitted) else text
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
@@ -808,7 +815,7 @@ class CopilotSDKSession(BaseSession):
                     try: box["ret"] = asyncio.run(self._send_with_session(prompt, stream_queue=q))
                     except Exception as e: box["err"] = e
                     finally: q.put(done)
-                t = threading.Thread(target=_runner, daemon=True); t.start()
+                t = threading.Thread(target=_runner); t.start()
                 while True:
                     chunk = q.get()
                     if chunk is done: break
@@ -816,16 +823,15 @@ class CopilotSDKSession(BaseSession):
                 t.join()
                 if box["err"] is None:
                     text = box["ret"] or ''
-                    if text and text != emitted:
-                        chunk = text[len(emitted):] if text.startswith(emitted) else text
-                        if chunk:
-                            emitted += chunk; yield chunk
+                    chunk = self._stream_tail(emitted, text)
+                    if chunk:
+                        emitted += chunk; yield chunk
                     return [{"type": "text", "text": text or emitted}]
                 err = f"!!!Error: {type(box['err']).__name__}: {box['err']}"
                 if emitted:
                     yield err; return [{"type": "text", "text": emitted + err}]
                 if attempt < self.max_retries:
-                    delay = min(30.0, self.base_delay * (1.5 ** attempt))
+                    delay = self._retry_delay(attempt)
                     print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                     if delay > 0: time.sleep(delay)
                     continue
@@ -837,7 +843,7 @@ class CopilotSDKSession(BaseSession):
             except Exception as e:
                 err = f"!!!Error: {type(e).__name__}: {e}"
                 if attempt < self.max_retries:
-                    delay = min(30.0, self.base_delay * (1.5 ** attempt))
+                    delay = self._retry_delay(attempt)
                     print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                     if delay > 0: time.sleep(delay)
                     continue
