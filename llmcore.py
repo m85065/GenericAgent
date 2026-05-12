@@ -852,26 +852,27 @@ class CopilotSDKSession(BaseSession):
         prompt = self._messages_to_prompt(messages)
         q = queue.Queue()
         done = object()
-        box = {"text": "", "err": None}
+        thread_result = {"text": "", "err": None}
         def _emit_delta(delta):
             if delta: q.put(delta)
         def _runner():
-            try: box["text"] = _run_async_sync(self._send_with_session(prompt, on_delta=_emit_delta))
-            except Exception as e: box["err"] = e
+            try: thread_result["text"] = _run_async_sync(self._send_with_session(prompt, on_delta=_emit_delta))
+            except Exception as e: thread_result["err"] = e
             finally: q.put(done)
-        t = threading.Thread(target=_runner, daemon=True); t.start()
+        background_thread = threading.Thread(target=_runner, daemon=True)
+        background_thread.start()
         streamed = False
         while True:
             item = q.get()
             if item is done: break
             streamed = True
             yield item
-        t.join()
-        if box["err"] is not None:
-            err = f"!!!Error: {type(box['err']).__name__}: {box['err']}"
+        background_thread.join()
+        if thread_result["err"] is not None:
+            err = f"!!!Error: {type(thread_result['err']).__name__}: {thread_result['err']}"
             yield err
             return [{"type": "text", "text": err}]
-        text = box["text"] or ""
+        text = thread_result["text"] or ""
         if text and not streamed: yield text
         return [{"type": "text", "text": text}]
 
