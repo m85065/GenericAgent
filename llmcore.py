@@ -732,7 +732,9 @@ class CopilotSDKSession(BaseSession):
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _session_event_field(self, data, *names):
         for name in names:
-            if isinstance(data, dict) and name in data: return data[name]
+            if isinstance(data, dict) and name in data:
+                value = data[name]
+                if value is not None: return value
             value = getattr(data, name, None)
             if value is not None: return value
         return None
@@ -754,7 +756,9 @@ class CopilotSDKSession(BaseSession):
         on = getattr(session, "on", None)
         if not callable(on): return None
         try: return on(self._emit_session_progress_event)
-        except Exception: return None
+        except Exception as e:
+            print(f"[WARN] CopilotSDKSession on_event bind failed: {type(e).__name__}: {e}")
+            return None
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
         rpc_client = getattr(client, "_client", None)
@@ -820,7 +824,7 @@ class CopilotSDKSession(BaseSession):
             finally:
                 if callable(unsubscribe):
                     try: unsubscribe()
-                    except Exception: pass
+                    except Exception as e: print(f"[WARN] CopilotSDKSession unsubscribe failed: {type(e).__name__}: {e}")
                 if session is not None:
                     try: await session.disconnect()
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
