@@ -757,7 +757,7 @@ class CopilotSDKSession(BaseSession):
         if event_name in {"idle", "session.idle"} or event_name.endswith(".idle"):
             return True
         message = str(progress_msg or "").strip().lower()
-        return message in {"idle", "session.idle"} or "session.idle" in message
+        return message == "idle" or "session.idle" in message
     def _make_on_event(self, delta_chunks, final_content, on_delta=None):
         """Return an on_event handler that collects streaming content and forwards progress to stderr."""
         log_to_console = self.cli_log_to_console

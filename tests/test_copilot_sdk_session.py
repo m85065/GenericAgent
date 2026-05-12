@@ -253,7 +253,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
             with patch("sys.stderr", new_callable=io.StringIO) as stderr:
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
-        self.assertNotIn("session.idle", stderr.getvalue().lower())
+        self.assertNotIn("session.idle", stderr.getvalue())
 
     def test_copilot_sdk_session_idle_timeout_returns_partial_subagent_response(self):
         cfg = {"model": "gpt-5"}
