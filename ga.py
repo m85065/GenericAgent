@@ -446,6 +446,20 @@ class GenericAgentHandler(BaseHandler):
         if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
 
+    @staticmethod
+    def _looks_like_unfinished_reply(content):
+        if not content or not content.strip(): return False
+        text = re.sub(r"<(?:thinking|summary)>[\s\S]*?</(?:thinking|summary)>", " ", content, flags=re.IGNORECASE)
+        text = re.sub(r"```[\s\S]*?```", " ", text)
+        text = re.sub(r"\s+", " ", text).strip(" \t\r\n`>*-")
+        if not text: return False
+        lowered = text.lower()
+        if lowered.startswith((
+            "i'll ", "i will ", "let me ", "i need to ", "i'm going to ", "im going to ",
+            "first, i'll ", "first i will ", "first i need to ", "next, i'll ", "next i will ",
+        )): return True
+        return text.startswith(("我来", "我先", "让我", "接下来", "下一步", "我需要先", "我会先", "继续"))
+
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
         当模型在一轮中未显式调用任何工具时，由引擎自动触发。
@@ -492,6 +506,13 @@ class GenericAgentHandler(BaseHandler):
             remaining = self._check_plan_completion()
             if remaining == 0:
                 self._exit_plan_mode(); yield "[Info] Plan完成：plan.md中0个[ ]残留，退出plan模式。\n"
+        if self._looks_like_unfinished_reply(content):
+            yield "[Info] Reply looks unfinished. Continue asking.\n"
+            return StepOutcome(None, next_prompt=(
+                "[System] 你上一轮回复看起来是在说“接下来要做什么”，而不是任务已经完成后的最终答复。"
+                "不要结束当前任务。请继续执行，直到真正完成后再直接回复用户；"
+                "如果确实需要用户提供信息，请显式调用 ask_user。"
+            ))
         
         yield "[Info] Final response to user.\n"
         return StepOutcome(response, next_prompt=None)
