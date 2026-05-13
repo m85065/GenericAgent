@@ -13,19 +13,38 @@ from ga import GenericAgentHandler, smart_format, get_global_memory, format_erro
 script_dir = os.path.dirname(os.path.abspath(__file__))
 _THINK_OPEN = "<thinking>"
 _THINK_CLOSE = "</thinking>"
-_THINK_TAG_MAX = max(len(_THINK_OPEN), len(_THINK_CLOSE))
+
+
+def _incomplete_tag_start(data):
+    """Return the index where *data* may be holding an incomplete tag opener.
+
+    Everything before that index is safe to parse; from that index to the end
+    is kept as *tail* for the next chunk.  Returns len(data) when there is no
+    incomplete tag at the end (i.e. the entire string is safe to process).
+    """
+    for tag in (_THINK_OPEN, _THINK_CLOSE):
+        for i in range(1, len(tag)):
+            if data.endswith(tag[:i]):
+                return len(data) - i
+    return len(data)
 
 
 def split_thinking_stream(chunk, state, end=False):
-    """Split streamed text into thinking-only and non-thinking text, with tag carry-over support."""
+    """Split streamed text into (thinking_text, gui_text).
+
+    thinking_text – content inside ``<thinking>…</thinking>`` (print to console).
+    gui_text      – everything outside those blocks (forward to GUI queue).
+    state         – mutable dict with keys ``in_thinking`` (bool) and ``tail`` (str)
+                    that must be carried across successive calls.
+    end           – flush the buffered tail without further hold-back (last chunk).
+    """
     data = (state.get('tail', '') or '') + (chunk or '')
     if end:
         body, state['tail'] = data, ''
     else:
-        if len(data) <= _THINK_TAG_MAX:
-            state['tail'] = data
-            return '', ''
-        body, state['tail'] = data[:-_THINK_TAG_MAX], data[-_THINK_TAG_MAX:]
+        safe = _incomplete_tag_start(data)
+        body, state['tail'] = data[:safe], data[safe:]
+
     think_out, gui_out, pos = [], [], 0
     in_thinking = bool(state.get('in_thinking', False))
     while pos < len(body):
@@ -35,22 +54,20 @@ def split_thinking_stream(chunk, state, end=False):
                 think_out.append(body[pos:])
                 pos = len(body)
             else:
-                think_out.append(body[pos:end_idx]); think_out.append(_THINK_CLOSE)
-                pos = end_idx + len(_THINK_CLOSE); in_thinking = False
+                think_out.append(body[pos:end_idx + len(_THINK_CLOSE)])
+                pos = end_idx + len(_THINK_CLOSE)
+                in_thinking = False
         else:
             start_idx = body.find(_THINK_OPEN, pos)
             if start_idx < 0:
                 gui_out.append(body[pos:])
                 pos = len(body)
             else:
-                gui_out.append(body[pos:start_idx]); think_out.append(_THINK_OPEN)
-                pos = start_idx + len(_THINK_OPEN); in_thinking = True
+                gui_out.append(body[pos:start_idx])
+                think_out.append(_THINK_OPEN)
+                pos = start_idx + len(_THINK_OPEN)
+                in_thinking = True
     state['in_thinking'] = in_thinking
-    if end and state.get('tail'):
-        tail = state.pop('tail')
-        if state.get('in_thinking', False): think_out.append(tail)
-        else: gui_out.append(tail)
-        state['tail'] = ''
     return ''.join(think_out), ''.join(gui_out)
 
 
