@@ -768,23 +768,28 @@ class CopilotSDKSession(BaseSession):
         if self.cli_env is not None: subprocess_kwargs["env"] = self.cli_env
         if self.cli_log_level: subprocess_kwargs["log_level"] = self.cli_log_level
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
-        async with CopilotClient(config=cfg) as client:
-            session = None
-            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
-            if self.model: kwargs["model"] = self.model
-            if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
-            if self.provider is not None: kwargs["provider"] = self.provider
-            try:
-                session = await client.create_session(**kwargs)
-                reply = await session.send_and_wait(prompt)
-            finally:
-                if session is not None:
-                    try: await session.disconnect()
-                    except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
-                self._emit_cli_logs(client)
-            data = getattr(reply, "data", reply)
-            if isinstance(data, dict): return str(data.get("content", ""))
-            return str(getattr(data, "content", data) or "")
+        reply = None
+        try:
+            async with CopilotClient(config=cfg) as client:
+                session = None
+                kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+                if self.model: kwargs["model"] = self.model
+                if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
+                if self.provider is not None: kwargs["provider"] = self.provider
+                try:
+                    session = await client.create_session(**kwargs)
+                    reply = await session.send_and_wait(prompt)
+                finally:
+                    if session is not None:
+                        try: await session.disconnect()
+                        except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
+                    self._emit_cli_logs(client)
+        except TimeoutError:
+            if reply is None:
+                raise
+        data = getattr(reply, "data", reply)
+        if isinstance(data, dict): return str(data.get("content", ""))
+        return str(getattr(data, "content", data) or "")
     def raw_ask(self, messages):
         try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
         except Exception as e:

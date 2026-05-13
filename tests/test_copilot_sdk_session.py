@@ -118,6 +118,27 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("stubbed copilot reply", output)
         self.assertEqual("", stderr.getvalue())
 
+    def test_timeout_on_session_idle_is_ignored_when_reply_obtained(self):
+        """TimeoutError raised during CopilotClient.__aexit__ (session.idle cleanup) should be suppressed."""
+        record = self.record
+        original_aexit = sys.modules["copilot"].CopilotClient.__aexit__
+
+        async def aexit_with_timeout(self_client, exc_type, exc, tb):
+            if exc_type is None:
+                raise TimeoutError("Timeout after 60.0s waiting for session.idle")
+            return False
+
+        sys.modules["copilot"].CopilotClient.__aexit__ = aexit_with_timeout
+
+        cfg = {"model": "gpt-5"}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello copilot sdk"))
+
+        sys.modules["copilot"].CopilotClient.__aexit__ = original_aexit
+        self.assertIn("stubbed copilot reply", output)
+        self.assertNotIn("!!!Error", output)
+
 
 if __name__ == "__main__":
     unittest.main()
