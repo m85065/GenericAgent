@@ -58,6 +58,8 @@ class CopilotSDKSessionTests(unittest.TestCase):
                     evt = types.SimpleNamespace(data=types.SimpleNamespace(delta_content=delta))
                     for handler in list(self._handlers):
                         handler(evt)
+                if record.get("fail_with_idle_timeout"):
+                    raise TimeoutError("Timeout after 30.0s waiting for session.idle")
                 reply_content = record.get("reply_content", "stubbed copilot reply")
                 evt = types.SimpleNamespace(data=types.SimpleNamespace(content=reply_content))
                 for handler in list(self._handlers):
@@ -182,6 +184,38 @@ class CopilotSDKSessionTests(unittest.TestCase):
             output = session.ask("hello copilot sdk")
         self.assertEqual("stubbed copilot reply", output)
         self.assertFalse(self.record["create_session_kwargs"]["streaming"])
+
+
+    def test_copilot_sdk_idle_timeout_ignored_no_content(self):
+        """session.idle TimeoutError with no streamed content must not surface as !!!Error:."""
+        cfg = {"model": "gpt-5", "max_retries": 0, "base_delay": 0}
+        self.record["fail_with_idle_timeout"] = True
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello"))
+        self.assertNotIn("!!!Error:", output)
+        self.assertEqual("", output)
+
+    def test_copilot_sdk_idle_timeout_ignored_with_partial_content(self):
+        """session.idle TimeoutError after partial streamed content must not append !!!Error:."""
+        cfg = {"model": "gpt-5", "max_retries": 0, "base_delay": 0}
+        self.record["stream_chunks"] = ["partial ", "reply"]
+        self.record["fail_with_idle_timeout"] = True
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello"))
+        self.assertNotIn("!!!Error:", output)
+        self.assertEqual("partial reply", output)
+
+    def test_copilot_sdk_idle_timeout_ignored_non_stream_mode(self):
+        """session.idle TimeoutError in non-stream mode must not surface as !!!Error:."""
+        cfg = {"model": "gpt-5", "stream": False, "max_retries": 0, "base_delay": 0}
+        self.record["fail_with_idle_timeout"] = True
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = session.ask("hello")
+        self.assertNotIn("!!!Error:", output)
+        self.assertEqual("", output)
 
 
 if __name__ == "__main__":

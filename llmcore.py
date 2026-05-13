@@ -735,6 +735,9 @@ class CopilotSDKSession(BaseSession):
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _retry_delay(self, attempt): return min(self._MAX_RETRY_DELAY, self.base_delay * (self._BACKOFF_FACTOR ** attempt))
     @staticmethod
+    def _is_idle_timeout(exc):
+        return isinstance(exc, TimeoutError) and 'session.idle' in str(exc)
+    @staticmethod
     def _stream_tail(emitted, text):
         if not text or text == emitted: return ''
         if text.startswith(emitted): return text[len(emitted):]
@@ -837,14 +840,19 @@ class CopilotSDKSession(BaseSession):
                         emitted += chunk; yield chunk
                     return [{"type": "text", "text": text or emitted}]
                 err = f"!!!Error: {type(box['err']).__name__}: {box['err']}"
+                idle_timeout = self._is_idle_timeout(box['err'])
                 if emitted:
-                    yield err; return [{"type": "text", "text": emitted + err}]
+                    if not idle_timeout:
+                        yield err
+                    return [{"type": "text", "text": emitted + ('' if idle_timeout else err)}]
                 if attempt < self.max_retries:
                     delay = self._retry_delay(attempt)
                     print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                     if delay > 0: time.sleep(delay)
                     continue
-                yield err; return [{"type": "text", "text": err}]
+                if not idle_timeout:
+                    yield err
+                return [{"type": "text", "text": '' if idle_timeout else err}]
         for attempt in range(self.max_retries + 1):
             try:
                 text = _run_async_sync(self._send_with_session(prompt))
@@ -856,7 +864,9 @@ class CopilotSDKSession(BaseSession):
                     print(f"[CopilotSDKSession] {err[:80]}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                     if delay > 0: time.sleep(delay)
                     continue
-                yield err; return [{"type": "text", "text": err}]
+                if not self._is_idle_timeout(e):
+                    yield err
+                return [{"type": "text", "text": '' if self._is_idle_timeout(e) else err}]
         if text: yield text
         return [{"type": "text", "text": text or ""}]
 
