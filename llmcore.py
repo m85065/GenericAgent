@@ -713,6 +713,23 @@ class NativeOAISession(NativeClaudeSession):
         return (yield from _openai_stream(self, _msgs_claude2oai(messages)))
 
 class CopilotSDKSession(BaseSession):
+    TOOL_MARKERS = (
+        "### Tools (mounted, always in effect):",
+        "### 工具库状态：持续有效",
+        "### Tools: still active, **ready to call**.",
+    )
+    EXECUTION_POLICY_TEXT = (
+        "=== SYSTEM ===\n"
+        "[Execution Policy] Do NOT use your built-in terminal, shell, PowerShell, or any native command-execution capability.\n"
+        "Do NOT run terminal commands directly (do not produce 'Ran terminal command:' output).\n"
+        "When any command, script, or code execution is needed, output it as a tool call "
+        "(for example code_run with the appropriate code_type such as 'powershell', 'bash', or 'python') "
+        "and wait for the tool_result from this agent. After all, do text response only, no matter what the user asks for, and never run anything on your own. If you need to run something, output it as a tool call and wait for the result. Always follow this policy strictly."
+    )
+    _RAN_TERMINAL_RE = re.compile(
+        r'Ran terminal command:\s*(.*?)(?=\nRan terminal command:|<tool_use>|<tool_call>|\Z)',
+        re.DOTALL,
+    )
     def __init__(self, cfg):
         github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
         ccfg = dict(cfg)
@@ -730,6 +747,16 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
+        raw_permission_mode = cfg.get('permission_mode', 'approve_all')
+        if isinstance(raw_permission_mode, str):
+            self.permission_mode = raw_permission_mode.strip().lower()
+        else:
+            print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'approve_all'.")
+            self.permission_mode = 'approve_all'
+        self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', False)
+        self._denied_permission_requests = []
+        self._warned_missing_tool_deny_handler = False
+        self._warned_missing_known_handler = False
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -764,10 +791,131 @@ class CopilotSDKSession(BaseSession):
                     elif p.get("type") == "image_url": parts.append("[image]")
                 content = "\n".join(parts)
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
-        return "\n\n".join(lines).strip()
+        prompt = "\n\n".join(lines).strip()
+        if not self.enforce_agent_tool_calls: return prompt
+        # Copilot SDK runtime can execute commands/scripts through its own permission flow.
+        # We inject a hard policy so execution requests are returned as tool calls for this agent to run.
+        policy = self.EXECUTION_POLICY_TEXT
+        return f"{policy}\n\n{prompt}" if prompt else policy
+    def _resolve_permission_handler(self, permission_handler_cls, prompt=''):
+        deny_handler = self._resolve_deny_handler(permission_handler_cls)
+        if self.enforce_agent_tool_calls and self._has_mounted_tools(prompt):
+            if callable(deny_handler):
+                def _deny_and_capture(*args, **kwargs):
+                    self._record_denied_permission_request({"args": args, "kwargs": kwargs})
+                    return deny_handler(*args, **kwargs)
+                return _deny_and_capture
+            if deny_handler is not None: return deny_handler
+            if not self._warned_missing_tool_deny_handler:
+                print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
+                self._warned_missing_tool_deny_handler = True
+            def _deny_all_for_tools(*args, **kwargs):
+                self._record_denied_permission_request({"args": args, "kwargs": kwargs})
+                return False
+            return _deny_all_for_tools
+        mode = self.permission_mode
+        approve_modes = {'approve_all', 'allow_all', 'allow'}
+        if mode in approve_modes:
+            h = getattr(permission_handler_cls, 'approve_all', None)
+            if h is not None: return h
+        if deny_handler is not None: return deny_handler
+        # Safe fallback: if SDK exposes no known handlers, force-deny every permission request.
+        if not self._warned_missing_known_handler:
+            print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
+            self._warned_missing_known_handler = True
+        def _deny_all(*_args, **_kwargs): return False
+        return _deny_all
+    def _resolve_deny_handler(self, permission_handler_cls):
+        for attr in ('deny_all', 'reject_all', 'disallow_all'):
+            h = getattr(permission_handler_cls, attr, None)
+            if h is not None: return h
+        return None
+    def _has_mounted_tools(self, prompt):
+        if not isinstance(prompt, str) or not prompt: return False
+        # Marker strings come from ToolClient._prepare_tool_instruction and its token-saving variant.
+        return any(marker in prompt for marker in self.TOOL_MARKERS)
+    def _record_denied_permission_request(self, request):
+        code, code_type = self._extract_code_from_permission_request(request)
+        self._denied_permission_requests.append({"code": code, "code_type": code_type, "raw": request})
+    def _extract_code_from_permission_request(self, request):
+        candidates = []
+        def _walk(obj, path=''):
+            if isinstance(obj, dict):
+                for k, v in obj.items(): _walk(v, f"{path}.{k}" if path else str(k))
+                return
+            if isinstance(obj, (list, tuple)):
+                for i, v in enumerate(obj): _walk(v, f"{path}[{i}]")
+                return
+            if hasattr(obj, '__dict__') and not isinstance(obj, type):
+                _walk(vars(obj), path or obj.__class__.__name__)
+                return
+            if isinstance(obj, str):
+                s = obj.strip()
+                if not s: return
+                lk = path.lower()
+                score = 1
+                if any(t in lk for t in ('command', 'cmd', 'script', 'code', 'shell', 'bash', 'python', 'powershell', 'pwsh', 'ps1')): score += 5
+                candidates.append((score, lk, s))
+        _walk(request)
+        if not candidates: return '', 'bash'
+        _, key, code = max(candidates, key=lambda x: (x[0], len(x[2])))
+        is_powershell = (
+            any(t in key for t in ('powershell', 'pwsh', 'ps1'))
+            or bool(re.search(r'^\s*(?:powershell|pwsh)(?:\s|$)', code, flags=re.IGNORECASE))
+        )
+        if is_powershell: return code, 'powershell'
+        is_python = ('python' in key) or bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', code))
+        return code, ('python' if is_python else 'bash')
+    _PS_CMD_INDICATORS = (
+        'Get-', 'Set-', 'New-', 'Remove-', 'Copy-', 'Move-', 'Rename-', 'Test-', 'Invoke-',
+        'Write-Host', 'Write-Output', 'Write-Error',
+        'Select-Object', 'Where-Object', 'ForEach-Object', 'Sort-Object', 'Format-Table', 'Format-List',
+        '-ErrorAction', '-Recurse', '-Force', '-Filter', '-Path ',
+        '$_', '$env:', '$PSVersionTable',
+    )
+    def _classify_terminal_command_type(self, cmd):
+        if any(ind in cmd for ind in self._PS_CMD_INDICATORS):
+            return 'powershell'
+        if bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', cmd, re.MULTILINE)):
+            return 'python'
+        return 'bash'
+    def _convert_ran_terminal_to_tool_calls(self, text):
+        """Convert 'Ran terminal command: <cmd>' blocks in Copilot's response into code_run tool calls.
+
+        When Copilot uses its built-in terminal directly (bypassing the permission handler),
+        its response contains 'Ran terminal command: <cmd>' markers.  This method strips those
+        blocks and returns equivalent <tool_use> blocks so the *agent* runs the commands instead.
+        Returns (cleaned_text, tool_blocks_list).
+        """
+        if not text or 'Ran terminal command:' not in text:
+            return text, []
+        tool_blocks = []
+        for m in self._RAN_TERMINAL_RE.finditer(text):
+            cmd = m.group(1).strip()
+            if not cmd:
+                continue
+            code_type = self._classify_terminal_command_type(cmd)
+            payload = {"name": "code_run", "arguments": {"code": cmd, "code_type": code_type}}
+            tool_blocks.append(f'<tool_use>{json.dumps(payload, ensure_ascii=False)}</tool_use>')
+        if not tool_blocks:
+            return text, []
+        clean_text = self._RAN_TERMINAL_RE.sub('', text).strip()
+        return clean_text, tool_blocks
+    def _append_tool_call_from_denied_permission(self, text):
+        if '<tool_use>' in (text or '') or '<tool_call>' in (text or ''): return text
+        for req in reversed(self._denied_permission_requests):
+            code = (req.get("code") or '').strip()
+            if not code: continue
+            payload = {"name": "code_run", "arguments": {"code": code, "code_type": req.get("code_type", "bash")}}
+            block = f'<tool_use>{json.dumps(payload, ensure_ascii=False)}</tool_use>'
+            if isinstance(text, str) and text.strip(): return text.rstrip() + '\n\n' + block
+            return block
+        return text
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
+        tool_mode = self.enforce_agent_tool_calls and self._has_mounted_tools(prompt)
+        self._denied_permission_requests = []
         subprocess_kwargs = {}
         if self.github_token: subprocess_kwargs["github_token"] = self.github_token
         if self.copilot_home: subprocess_kwargs["copilot_home"] = self.copilot_home
@@ -779,7 +927,7 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             session = None
-            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+            kwargs = {"on_permission_request": self._resolve_permission_handler(PermissionHandler, prompt=prompt), "streaming": False}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
@@ -792,8 +940,15 @@ class CopilotSDKSession(BaseSession):
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
                 self._emit_cli_logs(client)
             data = getattr(reply, "data", reply)
-            if isinstance(data, dict): return str(data.get("content", ""))
-            return str(getattr(data, "content", data) or "")
+            text = str(data.get("content", "")) if isinstance(data, dict) else str(getattr(data, "content", data) or "")
+            if tool_mode:
+                text, terminal_tool_blocks = self._convert_ran_terminal_to_tool_calls(text)
+                if terminal_tool_blocks:
+                    sep = '\n\n' if text.strip() else ''
+                    text = text.rstrip() + sep + '\n'.join(terminal_tool_blocks)
+                else:
+                    text = self._append_tool_call_from_denied_permission(text)
+            return text
     def raw_ask(self, messages):
         try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
         except Exception as e:
